@@ -1,0 +1,244 @@
+/// Firmware MECAA para Arduino UNO (modificar pines para otras versiones)
+//Version 0.1 con Stepper.h y Bresenham.
+//http://es.mecaa.wikia.com
+//2015 Maximiliano Ozono, Juan Carlos Agotegaray, Susana Prado Iratchet.
+// Uso: Puede probar el funcionamiento del firmware enviandole comandos por una terminal
+//serie a la placa, con el sguiente formato:
+// GX0000Y0000Z0000 para coordenadas de movimiento en XYZ 
+//(también se puede enviar para cada eje individual anteponiendo G y la letra del eje)
+// GC (para realizar rectángulos pequeños)
+//
+///////////////////////////////////////////////////////////////////////////////////////////
+
+#include <Servo.h> 
+#include <Stepper.h>
+//3 5 2 4
+Stepper MotorX(2048, 6,8,7,9);  //Modificar para otras placas que no sean UNO
+Stepper MotorY(2048, 10,12,11,13); //7 9 6 8
+Servo myservo;
+// Variables para manejar la cadena
+String serDataStr;
+int xPos = 0; //letra X en la cadena
+int yPos = 0; //letra Y en la cadena
+int Zpos = 0; 
+int posValue = 0;
+char recievedChar;
+String stringX; //valores XYZ obtenidos como string para despues convertirlos en numerolos
+String stringY;
+String stringZ;
+
+//Parámetros de la maquina.
+int pasos_mmX = 65;
+int pasos_mmY = 65;
+int pasos_mmZ = 72;
+int velocidad = 7;
+
+// Coordenadas obtenidas de la cadena
+int readX;
+int readY;
+int readZ;
+float escala = 1;
+//posicion anterior
+long px = 0;
+long py = 0;
+long pz = 0;
+
+//rectangulo:
+int Cx= 2;
+int Cy=2;
+
+// cantidad avanzada:
+int X_avanzado;
+int Y_avanzado;
+int Z_avanzado;
+
+
+//booleans para orden cumplida (los 3 deben estar en true para que imprima un Ok para la siguiente instruccion)
+boolean okX;
+boolean okY;
+boolean okZ;
+
+
+  long stepx;
+  long stepy;
+  
+  
+void setup() {
+  Serial.begin(115200); //velocidad en bps del puerto serie.
+  Serial.println("MECAA: Maquina Educativa CNC Abierta Argentina. 2015 Agotegaray,Ozono y Prado. http://es.mecaa.wikia.com");
+  Serial.println("Conexion serial inicializada, setear los parametros de la maquina y enviar instrucciones");
+
+myservo.attach(5);
+
+myservo.write(75);
+readX= 0;
+readY = 0;
+stringZ="1";
+readZ = 1;
+}
+
+void loop() {
+
+  while(Serial.available()) {   // Chequear si existe comunicación serial
+    recievedChar = Serial.read();
+    serDataStr += recievedChar;  // Joinear todas los caracteres en una cadena.
+    delay(5);    
+  }
+
+if (recievedChar != 13)
+{
+    if (serDataStr != "") 
+    {  // Si hay datos, se analizan
+     
+    if(serDataStr[0] =='G') //Si la cadena comienza con G, es un comando, seguimos leyendo
+    {
+       
+     //Serial.println(serDataStr); 
+     
+     //Lectura de la cadena
+          int Xpos = serDataStr.indexOf('X'); //posición de la letra X en la cadena
+          int Ypos = serDataStr.indexOf('Y'); //idem Y
+          int Zpos = serDataStr.indexOf('Z'); //idem Z -->> Sólo importará si es 0 o 1 la coordenada.
+
+       if (Xpos > 0) { 
+            stringX = serDataStr.substring(Xpos+1,Ypos) ; // buscamos el valor de X entre la letra X y la Y
+          } // if it doesnt exist it will remain as previous
+          if (Ypos > 0) { 
+            stringY = serDataStr.substring(Ypos+1,Zpos) ; // idem para Y
+          } // if it doesnt exist it will remain as previous
+          if (Zpos > 0) { 
+            stringZ = serDataStr.substring(Zpos+1,Zpos+5) ; // para Z, es todo lo que viene despues de hallar la letra Z.
+          }
+            
+         char carrayX[stringX.length() + 1]; //convertimos la cadena en un array
+        stringX.toCharArray(carrayX, sizeof(carrayX)); 
+         readX = atof(carrayX); //convertimos el array en un entero.
+        
+  
+        char carrayY[stringY.length() + 1]; 
+        stringY.toCharArray(carrayY, sizeof(carrayY)); 
+         readY = atof(carrayY); 
+
+        char carrayZ[stringZ.length() + 1]; 
+        stringZ.toCharArray(carrayZ, sizeof(carrayZ)); 
+         readZ = atof(carrayZ); 
+         
+        
+     //   Serial.print("X: ");
+       // Serial.println(readX);
+        //Serial.print(" Y: ");
+        //Serial.println(readY);
+        //Serial.print(" Z: ");
+        //Serial.println(readZ);
+        
+       
+        if (readZ>0)
+        {
+      myservo.write(75);
+      delay(100);
+        }
+        else
+        {
+        myservo.write(90);
+        delay(100);
+        }
+        
+        line(readX, readY); //dibujamos la línea a partir de las nuevas coordenadas (son absolutas)
+        
+        if(serDataStr[1] =='C')
+         {
+         
+         rectangulo(); //funcion para hacer rectángulos.
+         }
+      
+          
+     // px = readX;
+     // py= readY;
+             
+      Serial.println(serDataStr+"ok"); //al terminar las funciones line y rectangulo, la placa repsonde un "ok", y se preara para otra línea.
+     //
+
+     serDataStr = "";    //vaciamos el buffer del serial.
+    } 
+    else
+    {
+    serDataStr = "";    
+    }
+}
+
+  
+}
+
+
+
+
+
+  
+}
+
+
+
+
+////ALGORITMO DE BRESENHAM (para convertir las coordenadas en movimientos simultáneos de los motores)
+void line(float newx,float newy) {
+long dx=(newx*pasos_mmX*escala)-px; // distance  a moverse x escala (delta)
+long dy=(newy*pasos_mmY*escala)-py;
+int dirx=dx>0?1:-1; // dirección
+int diry=dy>0?1:-1;
+dx=abs(dx); // delta abs
+dy=abs(dy);
+
+long i;
+long over=0;
+
+if(dx>dy) {
+for(i=0;i<dx;++i) {  
+MotorX.step(dirx);
+over+=dy;
+if(over>=dx) {
+over-=dx;
+MotorY.step(diry);
+}
+delay(velocidad);// aplicamos el algoritmo un paso a la vez, ajustado por la velocidad.
+
+}
+} else {
+for(i=0;i<dy;++i) {
+MotorY.step(diry);
+over+=dx;
+if(over>=dy) {
+over-=dy;
+MotorX.step(dirx);
+}
+delay(velocidad); 
+
+}
+}
+
+
+px+= dx*dirx;
+py+= dy*diry;
+}
+
+void rectangulo () //dibujo un rectangulo que arranca en la esq sup izq de la ultima coord.
+{
+  readZ= 0;
+  myservo.write(90);
+  line((readX+Cx), readY);
+  readX= readX+Cx;
+line(readX, (-Cy+readY));
+readY= readY-Cy;
+line((readX-Cx), readY);
+readX= readX-Cx;
+line(readX, (readY+Cy));
+readY= readY+Cy;
+delay(200);
+myservo.write(75);
+readZ=1;
+}
+
+
+
+
+
+
